@@ -1,0 +1,239 @@
+### CODING PROTOCOL ###
+Coding Instructions
+Purpose
+This document is the single source of truth for how we implement tiny, testable tasks with Kolby’s Next + Supabase + Stripe starter as our base. It ensures high code quality, production safety, and a great mobile experience (iOS + Android via PWA).
+TL;DR: Do the smallest possible change, in the right layer, with tests, types, and policies first.
+0) Golden Principles
+Smallest possible diff. Implement only what the task requires.
+One concern per PR. No drive-by refactors, no unrelated files.
+RLS-first: DB permissions and policies land in the same PR as new tables.
+Types everywhere: Zod + TypeScript. No any, no silent casts.
+Mobile-first UX: touch targets, performance budgets, offline niceties.
+Don’t break what works: keep existing behavior unless the task states otherwise.
+If human action needed (e.g., keys, dashboard toggles): write a short, explicit checklist in the PR.
+1) Repo & Project Conventions
+Base template: KolbySisk/next-supabase-stripe-starter (Next 15, App Router, Supabase, Stripe, shadcn/ui, Resend, migrations, webhooks).
+Feature folders: Prefer src/features/<domain> for vertical slices (UI + actions + tests).
+Shared libs: Cross-feature logic in src/lib/* (pricing.ts, ai/scorer.ts, supabase/*, realtime.ts, etc.).
+UI library: shadcn/ui + Tailwind. Build custom UI in src/components/....
+State: Client-ephemeral in Zustand (/store), authoritative in Postgres.
+Routing: App Router; Server Components for data-heavy pages; Client Components only for interactivity/forms/Stripe.
+2) Task Execution Protocol (for Cursor/Codex)
+Each task is executed as follows:
+Understand the scope
+Read task card. Identify the single domain (DB, UI, server action, webhook, etc.).
+Confirm constraints (env vars, feature flags, cities allow-list, service fee).
+Plan the change
+Identify exact files to edit/create.
+Choose the correct layer: RSC, server action, route handler, Edge Function, client comp, or DB.
+Decide the acceptance tests (unit/integration/E2E/manual).
+Implement (tiny, typed, testable)
+Add types (TS), schemas (Zod), and guards first.
+Implement minimal logic. Keep functions small and pure.
+Test
+Unit (Vitest) for pure logic; Integration for server actions/webhooks; E2E (Playwright) for flows.
+Run bun test (or pnpm test) locally. Include screenshots for UI deltas when useful.
+Document
+Update CHANGELOG.md (Unreleased).
+If setup required, add a Setup block in PR with copy-paste commands.
+Open PR
+Title: feat(scope): short description
+Checklists completed (see §11).
+CI must be green (lint, typecheck, unit tests, build).
+3) Definition of Done (DoD)
+A task is Done only if ALL of the following are true:
+ Code compiles; no ESLint/Prettier errors; no type holes.
+ Unit tests cover core logic (happy + one failure path).
+ If DB: migration exists, RLS policies added, constraints/indexes declared, rollback safe.
+ Screens render on mobile; basic accessibility pass (labels, roles).
+ No new secrets in code; env documented.
+ No breaking changes to unrelated features.
+ PR includes a Test Plan and, if applicable, Manual Verification steps.
+4) Database Rules (Supabase / Postgres)
+4.1 Migrations
+One migration per table/policy change: migration:new <name> → edit SQL → migration:up.
+Always include:
+PK/FK with ON DELETE CASCADE for event-scoped tables.
+UNIQUE constraints for business invariants (e.g., one honoree per event).
+Indexes: btree for foreign keys/dates; GIN for tags.
+CHECK constraints (e.g., city allow-list: Hamburg/Hannover/Berlin).
+4.2 RLS Policies
+Enable RLS before exposing the table to the app.
+Policies match the architecture (member read, organizer write, self-insert vote, etc.).
+No client write to sensitive tables (bookings, payments)—server/webhook only.
+4.3 Seed & Fixtures
+Minimal deterministic seeds for local dev (3 activities per city, 2 events, 3 users).
+Keep seeds idempotent and small.
+5) Server Actions, APIs & Webhooks
+Writes go via Server Actions (or webhooks / Edge Functions). No direct client writes to privileged data.
+Input validation: Zod at the boundary; reject invalid payloads with typed errors.
+Auth: Use createServerClient (cookies) and verify user ↔ event membership server-side.
+Webhooks: Verify signatures (Stripe) and log request IDs. Update DB in a single transaction.
+Side effects last: During a request, compute → write DB → emit Realtime → send emails (async, best effort).
+6) Client Components & State
+When to be client: forms, Stripe Elements/Checkout, realtime updates, local steppers.
+Ephemeral state: store/useWizard.ts, useVoteDraft.ts; no business truth stored client-side.
+Forms: react-hook-form + zodResolver; no uncontrolled inputs leaking to URL unless needed.
+Realtime: subscribe/unsubscribe on mount/unmount; type payloads; guard channel names event:{id}:votes.
+No heavy logic in components: put logic in src/lib/* and import.
+7) UI & Design System
+Use shadcn/ui primitives; don’t reinvent Button, Card, Dialog.
+Tailwind rules:
+Keep classes readable; extract repeated patterns into components.
+Prefer utility classes over custom CSS; limit arbitrary values.
+@ui1 design folder:
+Adhere closely to assets in @ui1/** (png/rtf).
+Build screens per step using provided UI specs; name components to mirror folders.
+Mobile-first:
+Touch targets ≥ 44×44px; spacing comfortable.
+Avoid hover-only affordances; use tap states.
+Respect safe areas (iOS notch) with pt-safe, pb-safe patterns.
+8) Performance & PWA (iOS + Android)
+Performance budgets:
+First load JS ≤ 200KB gzipped per route (aim lower).
+No client bundles for purely static content—prefer RSC.
+Images: next/image with proper sizes.
+Code-split: dynamic import for heavy components (Stripe, charts, maps).
+PWA essentials:
+Manifest.json with icons/splash; display: standalone.
+Service Worker (Next PWA plugin OK) for static caching of shell + fonts.
+Install prompts documented/tested on iOS Safari & Android Chrome.
+Offline tolerance:
+Read-only itinerary loads from last known state if offline.
+Forms queue sends on reconnect (optional, feature-flagged).
+9) Security, Privacy, Compliance
+Secrets: .env only; never commit secrets; rotate if leaked.
+CSP: allow only required domains (Stripe, Supabase, Resend).
+Input/Output: escape outputs; validate inputs; never trust client IDs.
+GDPR: data minimization; implement data export & delete endpoints.
+Logs: no PII in logs; use request IDs; redact payment metadata where not needed.
+10) Payments (Stripe)
+Mode: One-time mode=payment for bookings; service fee is a separate line item.
+Metadata: always include eventId, packageId, bookingId on Checkout Session/Payment Intent.
+Split strategies: compute server-side and persist on bookings.
+Webhook: idempotent (use idempotency_key or check existing payment row); on success: update booking → send receipt via Resend.
+Testing
+Use Stripe test cards; CLI to replay events; never hit live keys from local dev.
+11) Pull Request Template (auto-insert)
+### What & Why
+- <one sentence: the single concern>
+- References: <task id / issue>
+
+### Scope of Change
+- Files touched:
+  - src/features/<domain>/...
+  - src/lib/...
+  - supabase/migrations/<id>__<name>.sql
+
+### Setup (if any)
+- [ ] Set ENV: <KEY=value>
+- [ ] Run migration: bun run migration:up
+
+### Tests
+- Unit: <cmd + results>
+- Integration/E2E: <cmd + results>
+- Manual: <exact steps>
+
+### Risk & Rollback
+- Impacted areas:
+- Rollback: `bun run migration:down` <id> ; revert feature flag <name>
+12) Testing Standards
+Unit (Vitest): pure functions (pricing.ts, ai/scorer.ts, helpers).
+Integration: server actions with mocked auth; webhooks with test payloads.
+E2E (Playwright): happy path scripts:
+organizer creates event → invites
+participants accept → questionnaires
+suggestions → votes → winner
+checkout → paid → receipt
+itinerary (honoree redaction)
+Coverage expectations:
+Core business logic ≥ 80%.
+Critical paths (payments, policies) must be tested.
+13) Error Handling & UX Copy
+Never swallow errors: log with a stable code (BOOKING_CREATE_FAILED).
+User messages: short, friendly, actionable; no internal error details.
+Retry advice: If action can be safely retried, provide a clear “Try again” and a help link.
+14) Accessibility (WCAG 2.1 AA)
+Labels for inputs; roles for custom components.
+Keyboard navigable: focus styles visible.
+Color contrast ≥ 4.5:1 for text.
+Motion: respect prefers-reduced-motion.
+15) Internationalization & Content
+Text in components via a central messages file; no hard-coded strings in logic.
+Currencies: display EUR with locale.
+Dates: timezones explicit (cities in Germany → CET/CEST); avoid ambiguous “today/tomorrow”.
+16) Analytics & Metrics
+Minimal event bus in src/lib/analytics.ts.
+Emit events only on user-visible transitions:
+event_created, questionnaire_completed, suggestions_viewed, vote_cast, checkout_started, paid.
+No PII in analytics payloads.
+17) Feature Flags
+Use src/lib/featureFlags.ts reading from env:
+ADVANCED_COMMS, SMS_ENABLED, PROVIDER_ADMIN (default false).
+Wrap routes/UI and server actions with flags; flags default to safe/false.
+18) Mobile Quality Bar (iOS/Android)
+Startup < 1.5s on mid-range Android (cold).
+Scroll at 60fps on key lists (dashboard, suggestions).
+Tap feedback within 100ms.
+Forms avoid keyboard thrash; use proper input types; scroll to focused field.
+Deep links: invite tokens open correct in-app view.
+Installable PWA: tested on iOS Safari & Android Chrome.
+19) Coding Style Cheatsheet
+Functions ≤ 40 lines; single responsibility.
+No magic values: centralize pricing, cities, fee in src/lib.
+Prefer composition over inheritance.
+Avoid global mutable state.
+Naming: doThing, getThing, createThing, not thingAction.
+Prefer early returns over deep nesting.
+Comments: “why”, not “what”—the code should tell “what”.
+20) Common Pitfalls (and how to avoid)
+Client writes to protected tables → Always use server actions; check RLS before merging.
+Unverified webhook requests → must verify signature; reject otherwise.
+Forgotten indexes on foreign keys/tags → add in migration; check query plans if slow.
+Leaking secrets in client bundle → never expose secret keys; only public anon keys client-side.
+Big client bundles → move logic to RSC, lazy-load Stripe/maps/components.
+21) Task Card Template (for Cursor)
+TASK: <short title, single concern>
+
+Goal:
+- <one line>
+
+Scope:
+- Implement in: <files/dirs>
+- DO NOT touch: <list>
+
+Acceptance Criteria:
+- <measurable checks, e.g., “voter sees realtime tally update within 1s”>
+- <DB row with fields...>
+
+Tests:
+- Unit: <which function>
+- Integration/E2E: <which flow>
+
+Setup:
+- ENV: <keys>
+- Migration(s): <file name> (if any)
+
+Out of Scope:
+- <explicitly list items to avoid>
+22) Example: Tiny PR for “Open Vote Window”
+Files:
+supabase/migrations/2025xxxx__vote_windows.sql (table + RLS)
+src/lib/votes/openVoteWindow.ts (server action)
+src/features/voting/OpenButton.tsx (client)
+tests/integration/openVoteWindow.test.ts
+DoD:
+Opening a window inserts row with opens_at=now(), closes_at=now()+interval '24h'.
+Only organizer can open; policy enforced.
+UI shows countdown immediately.
+Test covers organizer vs non-member paths.
+23) Release & Deployment
+CI: lint, typecheck, unit tests, build, migrations dry-run.
+Deploy: Vercel + Supabase; set env + Stripe webhook secret.
+Post-deploy check: Stripe CLI test event returns 200; one happy-path E2E on preview.
+24) Change Management
+Keep CHANGELOG.md updated (Unreleased → versioned on release).
+Semantic commit messages (feat:, fix:, chore:).
+Tag releases only after migrations are applied and E2E passes.
+Final Word
+If a rule seems to conflict with “smallest possible diff,” choose the smallest diff and leave a clear TODO with rationale. Our velocity comes from safe, tiny steps—each one fully typed, tested, and policy-correct.
